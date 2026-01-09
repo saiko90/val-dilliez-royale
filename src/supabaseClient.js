@@ -1,6 +1,7 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-client';
 
-export const supabase = createClient(
-  'https://zazgmlbdkvyleqfpdyzb.supabase.co', 
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InphemdtbGJka3Z5bGVxZnBkeXpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY1OTExNTgsImV4cCI6MjA3MjE2NzE1OH0.DBuwhHst30-GjwPNo99u-fzqdYRU6rLvHJCkejB3kfk'
-);
+// On met les clés en dur pour être certain que Vercel les lise correctement
+const supabaseUrl = 'https://zazgmlbdkvyleqfpdyzb.supabase.co';
+const supabaseAnonKey = 'sb_publishable_tVLb5w07h_BM9ZZOZ8rlOw_GcECSr4k';
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
