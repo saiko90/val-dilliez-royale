@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy, Heart, ShieldAlert, Info, X, CheckCircle2, AlertCircle, Zap, Ghost } from 'lucide-react';
+import { Trophy, Heart, ShieldAlert, Info, X, CheckCircle2, AlertCircle, Zap, Ghost, UserPlus } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 // --- CONFIGURATION DU DESIGN ---
@@ -19,6 +19,7 @@ export default function ValDIlliezRoyale() {
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [playerHistory, setPlayerHistory] = useState([]);
   const [showRules, setShowRules] = useState(false);
+  const [showJokerModal, setShowJokerModal] = useState(false);
   const [loginData, setLoginData] = useState({ name: '', pass: '' });
   const [timeLeft, setTimeLeft] = useState(null);
 
@@ -86,16 +87,14 @@ export default function ValDIlliezRoyale() {
   };
 
   // --- ACTIONS DU JEU ---
- const completeGage = async (gageId, points) => {
+  const completeGage = async (gageId, points) => {
     console.log("🏆 Validation du défi et notification n8n...");
     const gageTitle = myGages[0]?.title || "Défi inconnu";
     
-    // 1. Archivage dans l'historique Supabase
     await supabase.from('history').insert([
       { player_id: user.id, gage_title: gageTitle, status: 'success' }
     ]);
 
-    // 2. Mise à jour des points du joueur dans Supabase
     const { error } = await supabase.from('players').update({
       points: (user.points || 0) + (points || 1),
       current_gage_id: null,
@@ -105,7 +104,6 @@ export default function ValDIlliezRoyale() {
     if (!error) {
       confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
 
-      // 🚀 3. APPEL DU WEBHOOK N8N (URL MISE À JOUR)
       try {
         fetch('https://n8n-latest-fsq5.onrender.com/webhook/congrats-notif', {
           method: 'POST',
@@ -121,7 +119,6 @@ export default function ValDIlliezRoyale() {
         console.error("❌ Erreur notification n8n:", e);
       }
 
-      // 4. Rafraîchissement des données locales
       await fetchGlobalData();
       await fetchPrivateData(user.id);
       await fetchPlayerHistory(user.id);
@@ -141,51 +138,47 @@ export default function ValDIlliezRoyale() {
     fetchGlobalData();
   };
 
-  const sendJoker = async () => {
-    const targetName = prompt("À qui veux-tu transférer ce défi ?");
-    const target = players.find(p => p.name === targetName);
-    if (!target || target.id === user.id || target.current_gage_id) return alert("Cible invalide !");
+  const handleSendJoker = async (targetId) => {
+    const target = players.find(p => p.id === targetId);
+    if (!target || target.current_gage_id) return alert("Cible occupée ou invalide !");
 
-    await supabase.from('players').update({ current_gage_id: myGages[0].id, gage_assigned_at: new Date(), gage_status: 'pending' }).eq('id', target.id);
-    await supabase.from('players').update({ points: (user.points || 0) - 1, current_gage_id: null }).eq('id', user.id);
-    alert(`Cadeau envoyé à ${targetName} ! -1 point pour toi.`);
+    await supabase.from('players').update({ 
+      current_gage_id: myGages[0].id, 
+      gage_assigned_at: new Date(), 
+      gage_status: 'pending' 
+    }).eq('id', target.id);
+    
+    await supabase.from('players').update({ 
+      points: (user.points || 0) - 1, 
+      current_gage_id: null 
+    }).eq('id', user.id);
+    
+    setShowJokerModal(false);
+    alert(`Défi refilé à ${target.name} ! -1 point pour toi.`);
     fetchPrivateData(user.id);
     fetchGlobalData();
   };
 
   // --- GESTION DES ARCHIVES ---
- const toggleHistoryStatus = async (item) => {
-  const isNowSuccess = item.status !== 'success';
-  const newStatus = isNowSuccess ? 'success' : 'failed';
-  
-  // On définit la valeur de l'ajustement
-  const pointsAdjustment = isNowSuccess ? 1 : -1;
+  const toggleHistoryStatus = async (item) => {
+    const isNowSuccess = item.status !== 'success';
+    const newStatus = isNowSuccess ? 'success' : 'failed';
+    const pointsAdjustment = isNowSuccess ? 1 : -1;
 
-  console.log(`🔄 Correction SQL : ${item.gage_title} -> ${newStatus} (${pointsAdjustment}pt)`);
+    const { error: histError } = await supabase.from('history').update({ status: newStatus }).eq('id', item.id);
 
-  // 1. Mise à jour de l'archive
-  const { error: histError } = await supabase
-    .from('history')
-    .update({ status: newStatus })
-    .eq('id', item.id);
+    if (!histError) {
+      const { error: pError } = await supabase.from('players').update({ 
+        points: (user.points || 0) + pointsAdjustment 
+      }).eq('id', user.id).select();
 
-  if (!histError) {
-    // 2. Mise à jour du score par calcul SQL (plus fiable que le local)
-    // On utilise rpc ou une simple requête update avec la valeur calculée
-    const { error: pError } = await supabase
-      .from('players')
-      .update({ points: (user.points || 0) + pointsAdjustment })
-      .eq('id', user.id)
-      .select(); // On force le retour des données fraîches
-
-    if (!pError) {
-      // 3. RECHARGEMENT TOTAL pour forcer l'affichage à bouger
-      await fetchGlobalData();   // Met à jour le leaderboard
-      await fetchPrivateData(user.id); // Met à jour ton score en haut
-      await fetchPlayerHistory(user.id); // Met à jour les icônes de la modale
+      if (!pError) {
+        await fetchGlobalData();
+        await fetchPrivateData(user.id);
+        await fetchPlayerHistory(user.id);
+      }
     }
-  }
-};
+  };
 
   const openProfile = (player) => {
     setSelectedPlayer(player);
@@ -268,7 +261,7 @@ export default function ValDIlliezRoyale() {
                   <button onClick={abandonGage} className="border border-white/20 text-white font-bold py-5 rounded-2xl hover:bg-white/5 transition-colors uppercase text-sm italic shadow-xl">Abandon</button>
                 </div>
 
-                <button onClick={sendJoker} className="w-full mt-8 flex items-center justify-center gap-2 text-xs uppercase font-black text-slate-500 hover:text-red-500 transition-colors">
+                <button onClick={() => setShowJokerModal(true)} className="w-full mt-8 flex items-center justify-center gap-2 text-xs uppercase font-black text-slate-500 hover:text-red-500 transition-colors">
                   <ShieldAlert size={16} /> Activer Joker (-1pt)
                 </button>
               </motion.div>
@@ -302,6 +295,27 @@ export default function ValDIlliezRoyale() {
         </section>
       </div>
 
+      {/* MODALE JOKER (LISTE DÉROULANTE) */}
+      <AnimatePresence>
+        {showJokerModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[150] flex items-center justify-center p-6">
+            <div className="w-full max-w-sm bg-[#0f0f12] border border-white/10 rounded-[40px] p-8 shadow-2xl">
+              <h3 className="text-xl font-black uppercase italic mb-6 text-center text-red-500">Cibler un Joueur</h3>
+              <div className="space-y-3">
+                {players.filter(p => p.id !== user.id).map(p => (
+                  <button key={p.id} onClick={() => handleSendJoker(p.id)} disabled={!!p.current_gage_id}
+                          className={`w-full p-4 rounded-2xl border border-white/5 flex justify-between items-center transition-all ${p.current_gage_id ? 'opacity-30 grayscale cursor-not-allowed' : 'hover:bg-white/5 hover:border-red-600'}`}>
+                    <span className="font-bold uppercase tracking-widest text-sm">{p.name}</span>
+                    {p.current_gage_id ? <span className="text-[10px] text-red-500 font-black">OCCUPÉ</span> : <UserPlus size={18} className="text-green-500" />}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => setShowJokerModal(false)} className="w-full mt-6 text-slate-500 font-bold uppercase text-xs hover:text-white transition-colors">Annuler</button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* MODALE HISTORIQUE (PROFIL) */}
       <AnimatePresence>
         {selectedPlayer && (
@@ -330,15 +344,13 @@ export default function ValDIlliezRoyale() {
                         </span>
                       </div>
                       <div className="flex items-center gap-3">
-                        {/* BOUTON D'ÉDITION : Uniquement si c'est MON profil */}
                         {selectedPlayer.id === user.id && (
                           <button onClick={() => toggleHistoryStatus(item)} 
-                                  className="opacity-0 group-hover:opacity-100 p-2 hover:bg-white/10 rounded-lg text-slate-400 hover:text-yellow-500 transition-all" 
-                                  title="Inverser le statut (Success/Failed)">
+                                  className="opacity-0 group-hover:opacity-100 p-2 hover:bg-white/10 rounded-lg text-slate-400 hover:text-yellow-500 transition-all">
                             <Zap size={16}/>
                           </button>
                         )}
-                        {item.status === 'success' ? <CheckCircle2 size={20} className="text-green-500 drop-shadow-[0_0_8px_rgba(34,197,94,0.4)]" /> : <AlertCircle size={20} className="text-red-500 drop-shadow-[0_0_8px_rgba(239,68,68,0.4)]" />}
+                        {item.status === 'success' ? <CheckCircle2 size={20} className="text-green-500" /> : <AlertCircle size={20} className="text-red-500" />}
                       </div>
                     </div>
                   )) : <div className="text-center text-slate-600 italic py-10 font-bold uppercase text-[10px] tracking-widest">Dossier Vide</div>}
@@ -353,32 +365,30 @@ export default function ValDIlliezRoyale() {
       <AnimatePresence>
         {showRules && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowRules(false)}
-                      className="fixed inset-0 bg-black/98 z-[200] flex items-center justify-center p-10 text-center">
-            <div className="max-w-md space-y-10">
+                      className="fixed inset-0 bg-black/98 z-[200] flex items-center justify-center p-10 text-center overflow-y-auto">
+            <div className="max-w-md space-y-10 my-auto">
               <h2 className="text-6xl font-black italic text-red-600 uppercase tracking-tighter drop-shadow-[0_0_15px_rgba(220,38,38,0.3)]">Le Règlement</h2>
               <div className="space-y-8 text-slate-400 text-lg leading-relaxed">
                 <p>⏳ <strong className="text-white">DÉLAI</strong> : 3h par mission. L'échec n'est pas une option.</p>
                 <p>❤️ <strong className="text-white">VIES</strong> : 3 coeurs au départ. L'abandon coûte 1 coeur. À 0 vie, échec = -1 point.</p>
                 <p>🃏 <strong className="text-white">JOKER</strong> : Refile ton défi (-1pt). Si la cible refuse, elle perd 2 points.</p>
               </div>
+              
+              <div className="p-6 bg-red-600/10 border border-red-600/20 rounded-3xl text-left">
+                <h4 className="text-white font-black uppercase text-xs mb-3 flex items-center gap-2">
+                  <AlertCircle size={14} /> Connexion WhatsApp
+                </h4>
+                <p className="text-slate-400 text-[10px] mb-4 leading-relaxed uppercase font-bold tracking-wider">
+                  Obligatoire pour les alertes : clique et envoie le message.
+                </p>
+                <a href="https://wa.me/14155238886?text=join%20many-part" target="_blank" rel="noopener noreferrer"
+                   className="block w-full bg-[#25D366] text-white font-black p-4 rounded-2xl text-center text-xs uppercase hover:scale-95 transition-all shadow-xl">
+                  Réactiver les alertes
+                </a>
+              </div>
+
               <button onClick={() => setShowRules(false)} className="w-full bg-white text-black font-black p-6 rounded-3xl uppercase italic tracking-widest hover:bg-slate-100 transition-all shadow-2xl">Accepter la mission</button>
             </div>
-            <div className="mt-8 p-6 bg-red-600/10 border border-red-600/20 rounded-3xl">
-  <h4 className="text-white font-black uppercase text-xs mb-3 flex items-center gap-2">
-    <AlertCircle size={14} /> Connexion WhatsApp
-  </h4>
-  <p className="text-slate-400 text-[10px] mb-4 leading-relaxed">
-    Si tu ne reçois pas les alertes, clique sur le bouton ci-dessous et envoie le message généré.
-  </p>
-  <a 
-    href="https://wa.me/14155238886?text=join%20many-part" 
-    target="_blank" 
-    rel="noopener noreferrer"
-    className="block w-full bg-[#25D366] text-white font-black p-4 rounded-2xl text-center text-xs uppercase hover:scale-95 transition-all"
-  >
-    Réactiver les alertes
-  </a>
-</div>
           </motion.div>
         )}
       </AnimatePresence>
